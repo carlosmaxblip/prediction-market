@@ -7,16 +7,16 @@ import NavigationTab from '@/app/[locale]/(platform)/_components/NavigationTab'
 import { useFilters } from '@/app/[locale]/(platform)/_providers/FilterProvider'
 import { usePlatformNavigationData } from '@/app/[locale]/(platform)/_providers/PlatformNavigationProvider'
 import { usePathname } from '@/i18n/navigation'
-import { isCategoryPathSlug } from '@/lib/constants'
 import { resolvePlatformNavigationSelection } from '@/lib/platform-navigation'
+import { buildDynamicHomeCategorySlugSet, isPlatformReservedRootSlug } from '@/lib/platform-routing'
 import { cn } from '@/lib/utils'
 
-function getMainTagHref(slug: string): Route {
-  if (slug === 'sports') {
-    return '/sports' as Route
+function getMainTagHref(slug: string, dynamicHomeCategorySlugSet: ReadonlySet<string>): Route {
+  if (slug === 'trending') {
+    return '/' as Route
   }
 
-  if (isCategoryPathSlug(slug)) {
+  if (slug === 'new' || isPlatformReservedRootSlug(slug) || dynamicHomeCategorySlugSet.has(slug)) {
     return `/${slug}` as Route
   }
 
@@ -25,14 +25,16 @@ function getMainTagHref(slug: string): Route {
 
 export default function NavigationTabs() {
   const pathname = usePathname()
-  const { filters, updateFilters } = useFilters()
+  const { filters } = useFilters()
   const { tags, childParentMap } = usePlatformNavigationData()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const tabItemRef = useRef<(HTMLSpanElement | null)[]>([])
   const [showLeftShadow, setShowLeftShadow] = useState(false)
   const [showRightShadow, setShowRightShadow] = useState(false)
+  const dynamicHomeCategorySlugSet = useMemo(() => buildDynamicHomeCategorySlugSet(tags), [tags])
 
   const navigationSelection = useMemo(() => resolvePlatformNavigationSelection({
+    dynamicHomeCategorySlugSet,
     pathname,
     filters: {
       tag: filters.tag,
@@ -40,7 +42,7 @@ export default function NavigationTabs() {
       bookmarked: filters.bookmarked,
     },
     childParentMap,
-  }), [childParentMap, filters.bookmarked, filters.mainTag, filters.tag, pathname])
+  }), [childParentMap, dynamicHomeCategorySlugSet, filters.bookmarked, filters.mainTag, filters.tag, pathname])
 
   const activeIndex = useMemo(
     () => tags.findIndex(tag => tag.slug === navigationSelection.activeMainTagSlug),
@@ -120,10 +122,6 @@ export default function NavigationTabs() {
     return () => clearTimeout(timeoutId)
   }, [activeIndex])
 
-  const handleTagClick = useCallback((targetTag: string) => {
-    updateFilters({ tag: targetTag, mainTag: targetTag })
-  }, [updateFilters])
-
   return (
     <nav className="sticky top-15 z-20 bg-background md:top-17">
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border" />
@@ -157,10 +155,9 @@ export default function NavigationTabs() {
             <div key={tag.slug} className="flex snap-start items-center">
               <NavigationTab
                 tag={tag}
-                href={getMainTagHref(tag.slug)}
+                href={getMainTagHref(tag.slug, dynamicHomeCategorySlugSet)}
                 isActive={navigationSelection.activeMainTagSlug === tag.slug}
                 tabPaddingClass={index === 0 ? 'px-2.5 pl-0' : 'px-3'}
-                onClick={() => handleTagClick(tag.slug)}
                 containerRef={(element) => {
                   tabItemRef.current[index] = element
                 }}

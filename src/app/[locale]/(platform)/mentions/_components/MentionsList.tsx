@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { NewBadge } from '@/components/ui/new-badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useCurrentTimestamp } from '@/hooks/useCurrentTimestamp'
 import { Link } from '@/i18n/navigation'
 import { formatVolume } from '@/lib/formatters'
 import { cn, isMarketNew } from '@/lib/utils'
@@ -23,20 +24,23 @@ const SCHEDULE_FORMATTER = new Intl.DateTimeFormat('en-US', {
 })
 
 export default function MentionsList({ events }: MentionsListProps) {
+  const currentTimestamp = useCurrentTimestamp({ intervalMs: 60_000 })
+
   return (
     <div className="mx-auto flex w-full flex-col gap-4 md:gap-5">
       {events.map(event => (
-        <MentionsListItem key={event.id} event={event} />
+        <MentionsListItem key={event.id} event={event} currentTimestamp={currentTimestamp} />
       ))}
     </div>
   )
 }
 
 interface MentionsListItemProps {
+  currentTimestamp: number | null
   event: Event
 }
 
-function MentionsListItem({ event }: MentionsListItemProps) {
+function MentionsListItem({ event, currentTimestamp }: MentionsListItemProps) {
   const parsedEndDate = event.end_date ? new Date(event.end_date) : null
   const hasValidEndDate = parsedEndDate && !Number.isNaN(parsedEndDate.getTime())
   const eventDate = hasValidEndDate ? parsedEndDate : null
@@ -56,7 +60,8 @@ function MentionsListItem({ event }: MentionsListItemProps) {
   const visibleBadges = marketBadges.slice(0, 2)
   const hiddenBadges = marketBadges.slice(2)
 
-  const hasRecentMarket = event.markets.some(market => isMarketNew(market.created_at))
+  const hasRecentMarket = currentTimestamp !== null
+    && event.markets.some(market => isMarketNew(market.created_at, undefined, currentTimestamp))
   const totalVolume = event.markets.reduce((acc, market) => acc + (market.volume ?? 0), 0)
 
   const statusBadge = hasRecentMarket

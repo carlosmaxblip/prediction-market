@@ -14,6 +14,7 @@ import { useEventLastTrades } from '@/app/[locale]/(platform)/event/[slug]/_hook
 import { useEventMarketQuotes } from '@/app/[locale]/(platform)/event/[slug]/_hooks/useEventMidPrices'
 import { buildMarketTargets } from '@/app/[locale]/(platform)/event/[slug]/_hooks/useEventPriceHistory'
 import { useColumns } from '@/hooks/useColumns'
+import { useCurrentTimestamp } from '@/hooks/useCurrentTimestamp'
 import { resolveDisplayPrice } from '@/lib/market-chance'
 import { cn } from '@/lib/utils'
 import { useUser } from '@/stores/useUser'
@@ -22,6 +23,9 @@ interface EventsGridProps {
   filters: FilterState
   initialEvents: Event[]
   maxColumns?: number
+  onClearFilters?: () => void
+  routeMainTag: string
+  routeTag: string
 }
 
 const EMPTY_EVENTS: Event[] = []
@@ -149,6 +153,9 @@ export default function EventsGrid({
   filters,
   initialEvents = EMPTY_EVENTS,
   maxColumns,
+  onClearFilters,
+  routeMainTag,
+  routeTag,
 }: EventsGridProps) {
   const locale = useLocale()
   const parentRef = useRef<HTMLDivElement | null>(null)
@@ -156,13 +163,18 @@ export default function EventsGrid({
   const userCacheKey = user?.id ?? 'guest'
   const [hasInitialized, setHasInitialized] = useState(false)
   const [scrollMargin, setScrollMargin] = useState(0)
+  const currentTimestamp = useCurrentTimestamp({ intervalMs: 60_000 })
   const PAGE_SIZE = 40
-  const isDefaultState = filters.tag === 'trending'
+  const isRouteInitialState = filters.tag === routeTag
+    && filters.mainTag === routeMainTag
     && filters.search === ''
     && !filters.bookmarked
     && filters.frequency === 'all'
     && filters.status === 'active'
-  const shouldUseInitialData = isDefaultState && initialEvents.length > 0
+    && !filters.hideSports
+    && !filters.hideCrypto
+    && !filters.hideEarnings
+  const shouldUseInitialData = isRouteInitialState && initialEvents.length > 0
 
   const {
     status,
@@ -197,8 +209,8 @@ export default function EventsGrid({
     initialData: shouldUseInitialData ? { pages: [initialEvents], pageParams: [0] } : undefined,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
-    staleTime: 0,
-    placeholderData: previousData => previousData,
+    staleTime: 'static',
+    initialDataUpdatedAt: 0,
   })
 
   const previousUserKeyRef = useRef(userCacheKey)
@@ -256,8 +268,11 @@ export default function EventsGrid({
       return eventsMatchingTagFilters
     }
 
+    if (currentTimestamp == null) {
+      return eventsMatchingTagFilters
+    }
+
     const newestBySeriesSlug = new Map<string, Event>()
-    const nowMs = Date.now()
 
     for (const event of eventsMatchingTagFilters) {
       const seriesSlug = normalizeSeriesSlug(event.series_slug)
@@ -266,7 +281,7 @@ export default function EventsGrid({
       }
 
       const currentNewest = newestBySeriesSlug.get(seriesSlug)
-      if (!currentNewest || isPreferredSeriesEvent(event, currentNewest, nowMs)) {
+      if (!currentNewest || isPreferredSeriesEvent(event, currentNewest, currentTimestamp)) {
         newestBySeriesSlug.set(seriesSlug, event)
       }
     }
@@ -283,7 +298,7 @@ export default function EventsGrid({
 
       return newestBySeriesSlug.get(seriesSlug)?.id === event.id
     })
-  }, [allEvents, filters.hideSports, filters.hideCrypto, filters.hideEarnings, filters.status])
+  }, [allEvents, currentTimestamp, filters.hideSports, filters.hideCrypto, filters.hideEarnings, filters.status])
 
   const marketTargets = useMemo(
     () => visibleEvents.flatMap(event => buildMarketTargets(event.markets)),
@@ -369,7 +384,7 @@ export default function EventsGrid({
   }
 
   if (!allEvents || allEvents.length === 0) {
-    return <EventsEmptyState tag={filters.tag} searchQuery={filters.search} />
+    return <EventsEmptyState tag={filters.tag} searchQuery={filters.search} onClearFilters={onClearFilters} />
   }
 
   if (!visibleEvents || visibleEvents.length === 0) {
@@ -425,6 +440,7 @@ export default function EventsGrid({
                     event={event}
                     priceOverridesByMarket={priceOverridesByMarket}
                     enableHomeSportsMoneylineLayout
+                    currentTimestamp={currentTimestamp}
                   />
                 ))}
                 {isFetchingNextPage && isLastVirtualRow && <EventCardSkeleton />}

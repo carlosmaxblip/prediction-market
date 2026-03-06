@@ -6,6 +6,8 @@ import {
   resolvePlatformNavigationSelection,
 } from '@/lib/platform-navigation'
 
+const dynamicHomeCategorySlugSet = new Set(['geopolitics', 'politics'])
+
 describe('platform navigation helpers', () => {
   it('builds navigation tags with trending and new wrappers', () => {
     const tags = buildPlatformNavigationTags({
@@ -32,7 +34,7 @@ describe('platform navigation helpers', () => {
   })
 
   it('parses category subcategory paths', () => {
-    expect(parsePlatformPathname('/politics/trump')).toMatchObject({
+    expect(parsePlatformPathname('/politics/trump', dynamicHomeCategorySlugSet)).toMatchObject({
       isHomeLikePage: true,
       isMainTagPathPage: true,
       isSportsPathPage: false,
@@ -43,6 +45,7 @@ describe('platform navigation helpers', () => {
 
   it('keeps the route category active on category pages even before filters sync', () => {
     const selection = resolvePlatformNavigationSelection({
+      dynamicHomeCategorySlugSet,
       pathname: '/geopolitics',
       filters: {
         tag: 'trending',
@@ -60,6 +63,7 @@ describe('platform navigation helpers', () => {
 
   it('keeps subcategory paths selected from the pathname', () => {
     const selection = resolvePlatformNavigationSelection({
+      dynamicHomeCategorySlugSet,
       pathname: '/politics/trump',
       filters: {
         tag: 'trending',
@@ -77,6 +81,7 @@ describe('platform navigation helpers', () => {
 
   it('preserves the originating category highlight on event pages', () => {
     const selection = resolvePlatformNavigationSelection({
+      dynamicHomeCategorySlugSet,
       pathname: '/event/will-russia-enter-verkhnia-tersa-by-february-28',
       filters: {
         tag: 'ukraine',
@@ -92,8 +97,9 @@ describe('platform navigation helpers', () => {
     expect(selection.activeTagSlug).toBe('ukraine')
   })
 
-  it('falls back from a subtag to its parent main tag on the home page', () => {
+  it('keeps trending active on the home page even when filters still reference another category', () => {
     const selection = resolvePlatformNavigationSelection({
+      dynamicHomeCategorySlugSet,
       pathname: '/',
       filters: {
         tag: 'trump',
@@ -105,7 +111,23 @@ describe('platform navigation helpers', () => {
       },
     })
 
-    expect(selection.activeMainTagSlug).toBe('politics')
+    expect(selection.activeMainTagSlug).toBe('trending')
     expect(selection.activeTagSlug).toBe('trump')
+  })
+
+  it('keeps trending active when navigating back from /new before filters sync', () => {
+    const selection = resolvePlatformNavigationSelection({
+      dynamicHomeCategorySlugSet,
+      pathname: '/',
+      filters: {
+        tag: 'new',
+        mainTag: 'new',
+        bookmarked: false,
+      },
+      childParentMap: {},
+    })
+
+    expect(selection.activeMainTagSlug).toBe('trending')
+    expect(selection.activeTagSlug).toBe('new')
   })
 })
