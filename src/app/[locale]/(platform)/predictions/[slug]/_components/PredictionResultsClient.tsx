@@ -8,10 +8,11 @@ import type {
 import type { Event, Market } from '@/types'
 import { useAppKitAccount } from '@reown/appkit/react'
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
-import { BookmarkIcon, ChevronRightIcon, Clock3Icon, FlameIcon, MessageCircleIcon, SearchIcon, Settings2Icon } from 'lucide-react'
+import { BookmarkIcon, CheckIcon, ChevronRightIcon, Clock3Icon, FlameIcon, MessageCircleIcon, SearchIcon, Settings2Icon, XIcon } from 'lucide-react'
 import { useExtracted, useLocale } from 'next-intl'
 import { startTransition, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useCommentMetrics } from '@/app/[locale]/(platform)/event/[slug]/_hooks/useCommentMetrics'
+import { resolveResolvedOrderPanelDisplay } from '@/app/[locale]/(platform)/event/[slug]/_utils/resolved-order-panel-market'
 import PredictionResultsFilters from '@/app/[locale]/(platform)/predictions/[slug]/_components/PredictionResultsFilters'
 import PredictionResultsSearchParamsSync from '@/app/[locale]/(platform)/predictions/[slug]/_components/PredictionResultsSearchParamsSync'
 import EventIconImage from '@/components/EventIconImage'
@@ -28,7 +29,9 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAppKit } from '@/hooks/useAppKit'
 import { useDebounce } from '@/hooks/useDebounce'
+import { useOutcomeLabel } from '@/hooks/useOutcomeLabel'
 import { usePathname, useRouter } from '@/i18n/navigation'
+import { OUTCOME_INDEX } from '@/lib/constants'
 import { fetchEventsApi } from '@/lib/events-api'
 import { resolveEventPagePath } from '@/lib/events-routing'
 import { formatCompactCurrency, formatDate } from '@/lib/formatters'
@@ -140,6 +143,51 @@ function buildDateLabel(event: Event, currentTimestamp: number | null) {
 
 function getEventRecentVolume(event: Event) {
   return event.markets.reduce((sum, market) => sum + (market.volume_24h ?? 0), 0)
+}
+
+function resolveMarketResultLabel(market: Market | null | undefined) {
+  return market?.short_title?.trim() || market?.title?.trim() || null
+}
+
+function resolveResolvedPredictionResultLabel(event: Event) {
+  const isMultiMarket = Math.max(event.total_markets_count ?? 0, event.markets.length) > 1
+  const rankedCandidates = event.markets
+    .map((market, index) => {
+      const resolvedDisplay = resolveResolvedOrderPanelDisplay({
+        event,
+        selectedMarket: market,
+      })
+      const displayMarket = resolvedDisplay.market ?? market
+      const resolvedOutcome = displayMarket?.outcomes?.find(
+        outcome => outcome.outcome_index === resolvedDisplay.resolvedOutcomeIndex,
+      ) ?? null
+      const outcomeLabel = resolvedDisplay.outcomeLabel?.trim() || resolvedOutcome?.outcome_text?.trim() || null
+      const marketLabel = resolvedDisplay.marketTitle?.trim() || resolveMarketResultLabel(displayMarket)
+      const label = isMultiMarket ? marketLabel || outcomeLabel : outcomeLabel || marketLabel
+      const rank = resolvedDisplay.resolvedOutcomeIndex === OUTCOME_INDEX.YES
+        ? 0
+        : resolvedDisplay.resolvedOutcomeIndex === OUTCOME_INDEX.NO
+          ? 1
+          : 2
+
+      return {
+        index,
+        label,
+        rank,
+      }
+    })
+    .sort((left, right) => (left.rank - right.rank) || (left.index - right.index))
+
+  const winningCandidate = rankedCandidates.find(candidate => Boolean(candidate.label))
+
+  return {
+    label: winningCandidate?.label ?? null,
+    outcomeIndex: winningCandidate?.rank === 1
+      ? OUTCOME_INDEX.NO
+      : winningCandidate?.rank === 0
+        ? OUTCOME_INDEX.YES
+        : null,
+  }
 }
 
 function filterPredictionEventsByStatus(events: Event[], status: PredictionResultsStatusOption) {
@@ -537,7 +585,12 @@ export default function PredictionResultsClient({
               : (
                   <div className="divide-y divide-border/70">
                     {visibleEvents.map(event => (
-                      <PredictionResultRow key={event.id} event={event} currentTimestamp={currentTimestamp} />
+                      <PredictionResultRow
+                        key={event.id}
+                        event={event}
+                        currentTimestamp={currentTimestamp}
+                        showResolvedOutcomeLayout={selectedStatus === 'resolved'}
+                      />
                     ))}
                   </div>
                 )}
@@ -600,23 +653,46 @@ export default function PredictionResultsClient({
 function PredictionResultRow({
   currentTimestamp,
   event,
+  showResolvedOutcomeLayout = false,
 }: {
   currentTimestamp: number | null
   event: Event
+  showResolvedOutcomeLayout?: boolean
 }) {
   const t = useExtracted()
   const locale = useLocale()
+  const normalizeOutcomeLabel = useOutcomeLabel()
   const { data: commentMetrics } = useCommentMetrics(event.slug)
   const primaryMarket = resolvePrimaryMarket(event)
   const primaryProbability = primaryMarket?.probability ?? 0
   const supportingTags = event.tags.slice(0, 2)
-  const isMultiMarket = Math.max(event.total_markets_count, event.markets.length) > 1
+  const isMultiMarket = Math.max(event.total_markets_count ?? 0, event.markets.length) > 1
+  const isResolvedEvent = isEventResolvedLike(event)
   const recentVolume = getEventRecentVolume(event)
   const commentsCount = commentMetrics?.comments_count ?? null
   const eventPath = resolveEventPagePath(event)
   const selectedMarketLabel = primaryMarket?.short_title?.trim()
     || primaryMarket?.title?.trim()
     || (event.status === 'resolved' ? t('Resolved') : t('Market'))
+  const resolvedResultDisplay = useMemo(() => {
+    if (!showResolvedOutcomeLayout || !isResolvedEvent) {
+      return {
+        label: null,
+        outcomeIndex: null,
+      }
+    }
+
+    const resolvedDisplay = resolveResolvedPredictionResultLabel(event)
+    return {
+      label: resolvedDisplay.label ? (normalizeOutcomeLabel(resolvedDisplay.label) || resolvedDisplay.label) : t('Resolved'),
+      outcomeIndex: resolvedDisplay.outcomeIndex,
+    }
+  }, [event, isResolvedEvent, normalizeOutcomeLabel, showResolvedOutcomeLayout, t])
+  const resolvedBadgeOutcome = resolvedResultDisplay.outcomeIndex === OUTCOME_INDEX.NO
+    ? 'no'
+    : resolvedResultDisplay.outcomeIndex === OUTCOME_INDEX.YES
+      ? 'yes'
+      : 'unknown'
 
   return (
     <div className="group relative py-4">
@@ -716,17 +792,52 @@ function PredictionResultRow({
           </div>
 
           <div className="flex max-w-[42%] min-w-[112px] shrink-0 items-center gap-3 self-center">
-            <div className="flex min-w-0 flex-1 flex-col items-end justify-center text-right">
-              <p className="truncate text-xl leading-none font-semibold tracking-tight text-foreground md:text-[26px]">
-                {Math.round(primaryProbability)}
-                %
-              </p>
-              {isMultiMarket && (
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {selectedMarketLabel}
-                </p>
-              )}
-            </div>
+            {showResolvedOutcomeLayout && isResolvedEvent
+              ? (
+                  <div className="flex min-w-0 flex-1 flex-col items-end justify-center text-right">
+                    <div className="flex max-w-full items-center gap-2">
+                      <p
+                        className="truncate text-lg font-medium text-foreground"
+                        title={resolvedResultDisplay.label ?? undefined}
+                      >
+                        {resolvedResultDisplay.label}
+                      </p>
+                      <span
+                        data-testid="prediction-result-resolved-badge"
+                        data-outcome={resolvedBadgeOutcome}
+                        className={cn(
+                          'flex size-5 shrink-0 items-center justify-center rounded-full',
+                          resolvedBadgeOutcome === 'no' && 'bg-no text-background',
+                          resolvedBadgeOutcome === 'yes' && 'bg-yes text-background',
+                          resolvedBadgeOutcome === 'unknown' && 'bg-muted text-muted-foreground',
+                        )}
+                      >
+                        {resolvedBadgeOutcome === 'no'
+                          ? <XIcon className="size-3.5" strokeWidth={2.6} />
+                          : resolvedBadgeOutcome === 'yes'
+                            ? <CheckIcon className="size-3.5" strokeWidth={2.6} />
+                            : <span className="size-2 rounded-full bg-current" />}
+                      </span>
+                    </div>
+                  </div>
+                )
+              : (
+                  <div className="flex min-w-0 flex-1 flex-col items-end justify-center text-right">
+                    <p className="
+                      truncate text-xl leading-none font-semibold tracking-tight text-foreground
+                      md:text-[26px]
+                    "
+                    >
+                      {Math.round(primaryProbability)}
+                      %
+                    </p>
+                    {isMultiMarket && (
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        {selectedMarketLabel}
+                      </p>
+                    )}
+                  </div>
+                )}
             <ChevronRightIcon className="
               size-4 shrink-0 text-muted-foreground transition-transform duration-150
               group-hover:translate-x-0.5
